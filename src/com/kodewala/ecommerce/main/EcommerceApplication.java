@@ -27,7 +27,11 @@ import com.kodewala.ecommerce.service.impl.OrderServiceImpl;
 import com.kodewala.ecommerce.service.impl.ProductServiceImpl;
 
 import java.util.List;
+import java.util.Objects;
 import java.util.Scanner;
+import java.util.Set;
+import java.util.TreeSet;
+import java.util.stream.Collectors;
 
 /**
  * Class Name: EcommerceApplication
@@ -59,6 +63,13 @@ public class EcommerceApplication {
 
     // Currently logged-in customer session (null if guest)
     private static Customer currentCustomer = null;
+
+    // Customer ID 0 is designated for guest / non-logged-in cart sessions
+    private static final int GUEST_CUSTOMER_ID = 0;
+
+    private static int getActiveCustomerId() {
+        return currentCustomer != null ? currentCustomer.getCustomerId() : GUEST_CUSTOMER_ID;
+    }
 
     public static void main(String[] args) {
         // Step 1: Initialize Repositories (Data Storage Layer)
@@ -160,57 +171,84 @@ public class EcommerceApplication {
     private static void handleViewAllProducts() {
         printHeader("ALL PRODUCTS IN STORE");
         List<Product> products = productService.getAllProducts();
-        if (products.isEmpty()) {
-            System.out.println("No products available in the store.");
-        } else {
-            products.forEach(System.out::println);
-        }
+        displayProductList(products);
     }
 
     private static void handleAdminSearchProduct() {
-        printHeader("SEARCH PRODUCT");
-        System.out.println("1. Search by Product ID");
-        System.out.println("2. Search by Product Name");
-        System.out.println("3. Search by Category");
-        System.out.print("Enter your choice: ");
-        int choice = readIntChoice();
+        printHeader("SEARCH PRODUCT (ADMIN)");
 
-        try {
-            switch (choice) {
-                case 1 -> {
-                    System.out.print("Enter Product ID: ");
-                    int id = readIntChoice();
-                    Product p = productService.getProductById(id);
-                    System.out.println("\nFound Product:\n" + p);
-                }
-                case 2 -> {
-                    System.out.print("Enter Product Name: ");
-                    String name = scanner.nextLine().trim();
-                    List<Product> list = productService.searchByName(name);
-                    displayProductList(list);
-                }
-                case 3 -> {
-                    System.out.print("Enter Category: ");
-                    String cat = scanner.nextLine().trim();
-                    List<Product> list = productService.filterByCategory(cat);
-                    displayProductList(list);
-                }
-                default -> System.out.println("[!] Invalid search option.");
-            }
-        } catch (ProductNotFoundException e) {
-            System.out.println("\n[!] " + e.getMessage());
+        List<Product> products = productService.getAllProducts();
+        if (products.isEmpty()) {
+            System.out.println("No products available in the store.");
+            return;
         }
+
+        // Show Available Categories
+        Set<String> categories = products.stream()
+                .map(Product::getCategory)
+                .filter(Objects::nonNull)
+                .collect(Collectors.toCollection(TreeSet::new));
+        System.out.println("CATEGORIES: " + String.join(" | ", categories));
+
+        // Display Products List Table
+        displayProductList(products);
+
+        System.out.print("\nEnter Product Name, Category, or ID to search: ");
+        String query = scanner.nextLine().trim();
+        if (query.isEmpty()) {
+            System.out.println("[!] Search query cannot be empty.");
+            return;
+        }
+
+        // 1. Try search by numeric ID first
+        try {
+            int id = Integer.parseInt(query);
+            try {
+                Product p = productService.getProductById(id);
+                System.out.println("\nFound Product:\n" + p);
+                return;
+            } catch (ProductNotFoundException ignored) {}
+        } catch (NumberFormatException ignored) {}
+
+        // 2. Search by Product Name
+        List<Product> nameMatches = productService.searchByName(query);
+        if (!nameMatches.isEmpty()) {
+            displayProductList(nameMatches);
+            return;
+        }
+
+        // 3. Search by Category
+        List<Product> catMatches = productService.filterByCategory(query);
+        if (!catMatches.isEmpty()) {
+            displayProductList(catMatches);
+            return;
+        }
+
+        System.out.println("\n[!] No products found matching: '" + query + "'.");
     }
 
     private static void handleUpdateProduct() {
         printHeader("UPDATE PRODUCT");
-        System.out.print("Enter Product ID to update: ");
-        int id = readIntChoice();
+
+        List<Product> products = productService.getAllProducts();
+        if (products.isEmpty()) {
+            System.out.println("No products available in the store to update.");
+            return;
+        }
+
+        Set<String> categories = products.stream()
+                .map(Product::getCategory)
+                .filter(Objects::nonNull)
+                .collect(Collectors.toCollection(TreeSet::new));
+        System.out.println("CATEGORIES: " + String.join(" | ", categories));
+        displayProductList(products);
+
+        System.out.print("\nEnter Product Name or ID to update: ");
+        String input = scanner.nextLine().trim();
 
         try {
-            // Verify product exists first
-            Product p = productService.getProductById(id);
-            System.out.println("Current details: " + p);
+            Product p = resolveProduct(input);
+            System.out.println("\nSelected: " + p);
 
             System.out.println("1. Update Price");
             System.out.println("2. Update Quantity (Stock)");
@@ -220,12 +258,12 @@ public class EcommerceApplication {
             if (option == 1) {
                 System.out.print("Enter new Price (Rs.): ");
                 double newPrice = Double.parseDouble(scanner.nextLine().trim());
-                productService.updateProductPrice(id, newPrice);
+                productService.updateProductPrice(p.getProductId(), newPrice);
                 System.out.println("[SUCCESS] Product price updated successfully!");
             } else if (option == 2) {
                 System.out.print("Enter new Quantity: ");
                 int newQty = readIntChoice();
-                productService.updateProductQuantity(id, newQty);
+                productService.updateProductQuantity(p.getProductId(), newQty);
                 System.out.println("[SUCCESS] Product quantity updated successfully!");
             } else {
                 System.out.println("[!] Invalid option.");
@@ -237,12 +275,27 @@ public class EcommerceApplication {
 
     private static void handleDeleteProduct() {
         printHeader("DELETE PRODUCT");
-        System.out.print("Enter Product ID to delete: ");
-        int id = readIntChoice();
+
+        List<Product> products = productService.getAllProducts();
+        if (products.isEmpty()) {
+            System.out.println("No products available in the store to delete.");
+            return;
+        }
+
+        Set<String> categories = products.stream()
+                .map(Product::getCategory)
+                .filter(Objects::nonNull)
+                .collect(Collectors.toCollection(TreeSet::new));
+        System.out.println("CATEGORIES: " + String.join(" | ", categories));
+        displayProductList(products);
+
+        System.out.print("\nEnter Product Name or ID to delete: ");
+        String input = scanner.nextLine().trim();
 
         try {
-            productService.deleteProduct(id);
-            System.out.println("\n[SUCCESS] Product deleted successfully!");
+            Product p = resolveProduct(input);
+            productService.deleteProduct(p.getProductId());
+            System.out.println("\n[SUCCESS] Product '" + p.getProductName() + "' deleted successfully!");
         } catch (ProductNotFoundException e) {
             System.out.println("\n[!] " + e.getMessage());
         }
@@ -283,7 +336,7 @@ public class EcommerceApplication {
     private static void runCustomerMenu() {
         boolean inCustomer = true;
         while (inCustomer) {
-            printHeader("CUSTOMER MENU" + (currentCustomer != null ? " [Logged in as: " + currentCustomer.getName() + "]" : " [Not Logged In]"));
+            printHeader("CUSTOMER MENU" + (currentCustomer != null ? " [Logged in as: " + currentCustomer.getName() + "]" : " [Guest Mode]"));
             System.out.println("1. Register");
             System.out.println("2. Login");
             System.out.println("3. View Products");
@@ -294,7 +347,7 @@ public class EcommerceApplication {
             System.out.println("8. Place Order");
             System.out.println("9. View My Orders");
             System.out.println("10. Cancel Order");
-            System.out.println("11. Logout / Back to Main Menu");
+            System.out.println("11. " + (currentCustomer != null ? "Logout & Back to Main Menu" : "Back to Main Menu"));
             System.out.print("Enter your choice: ");
 
             int choice = readIntChoice();
@@ -310,6 +363,9 @@ public class EcommerceApplication {
                 case 9 -> handleViewMyOrders();
                 case 10 -> handleCancelOrder();
                 case 11 -> {
+                    if (currentCustomer != null) {
+                        System.out.println("\n[SUCCESS] Logged out from " + currentCustomer.getName() + ".");
+                    }
                     currentCustomer = null;
                     inCustomer = false;
                 }
@@ -348,8 +404,33 @@ public class EcommerceApplication {
         try {
             currentCustomer = customerService.login(id);
             System.out.println("\n[SUCCESS] Welcome back, " + currentCustomer.getName() + "!");
+            // Merge guest cart items into customer cart if any were added prior to login
+            mergeGuestCartToCustomerCart();
         } catch (CustomerNotFoundException e) {
             System.out.println("\n[!] " + e.getMessage());
+        }
+    }
+
+    /**
+     * Merges items added while browsing as a guest into the logged-in customer's shopping cart.
+     */
+    private static void mergeGuestCartToCustomerCart() {
+        if (currentCustomer == null) return;
+        List<CartItem> guestItems = cartService.getCartItems(GUEST_CUSTOMER_ID);
+        if (!guestItems.isEmpty()) {
+            int mergedCount = 0;
+            for (CartItem item : guestItems) {
+                try {
+                    cartService.addToCart(currentCustomer.getCustomerId(), item.getProductId(), item.getQuantity());
+                    mergedCount++;
+                } catch (Exception e) {
+                    System.out.println("[!] Notice: Could not transfer " + item.getProductName() + " to account cart: " + e.getMessage());
+                }
+            }
+            cartService.clearCart(GUEST_CUSTOMER_ID);
+            if (mergedCount > 0) {
+                System.out.println("[INFO] " + mergedCount + " item(s) from your guest session were merged into your account cart!");
+            }
         }
     }
 
@@ -366,33 +447,34 @@ public class EcommerceApplication {
      * Uses Java 8 Stream API implementations in ProductService.
      */
     private static void handleCustomerSearchProduct() {
-        printHeader("SEARCH PRODUCTS (JAVA 8 STREAM API)");
-        System.out.println("1. Search by Name");
-        System.out.println("2. Filter by Category");
-        System.out.println("3. Filter by Brand");
-        System.out.println("4. Filter by Price Range");
-        System.out.println("5. Sort by Price (Low to High)");
-        System.out.println("6. Sort by Price (High to Low)");
-        System.out.print("Enter search option: ");
+        printHeader("SEARCH PRODUCTS");
+        System.out.print("Enter Product Name or keyword to search: ");
+        String name = scanner.nextLine().trim();
+        List<Product> list = productService.searchByName(name);
+        displayProductList(list);
+
+        System.out.println("\nAdditional Filters & Sorting (Optional):");
+        System.out.println("1. Filter by Category");
+        System.out.println("2. Filter by Brand");
+        System.out.println("3. Filter by Price Range");
+        System.out.println("4. Sort by Price (Low to High)");
+        System.out.println("5. Sort by Price (High to Low)");
+        System.out.println("6. Done / Return to Customer Menu");
+        System.out.print("Enter option (or 6 to return): ");
 
         int option = readIntChoice();
         switch (option) {
             case 1 -> {
-                System.out.print("Enter product name: ");
-                String name = scanner.nextLine().trim();
-                displayProductList(productService.searchByName(name));
-            }
-            case 2 -> {
                 System.out.print("Enter category: ");
                 String cat = scanner.nextLine().trim();
                 displayProductList(productService.filterByCategory(cat));
             }
-            case 3 -> {
+            case 2 -> {
                 System.out.print("Enter brand: ");
                 String brand = scanner.nextLine().trim();
                 displayProductList(productService.filterByBrand(brand));
             }
-            case 4 -> {
+            case 3 -> {
                 try {
                     System.out.print("Enter minimum price (Rs.): ");
                     double min = Double.parseDouble(scanner.nextLine().trim());
@@ -403,34 +485,70 @@ public class EcommerceApplication {
                     System.out.println("[!] Invalid price input.");
                 }
             }
-            case 5 -> displayProductList(productService.sortByPrice(true));
-            case 6 -> displayProductList(productService.sortByPrice(false));
-            default -> System.out.println("[!] Invalid search option.");
+            case 4 -> displayProductList(productService.sortByPrice(true));
+            case 5 -> displayProductList(productService.sortByPrice(false));
+            case 6 -> {}
+            default -> {}
         }
     }
 
     private static void handleAddToCart() {
-        if (!ensureLoggedIn()) return;
+        printHeader("ADD PRODUCT TO CART" + (currentCustomer == null ? " [Guest Mode]" : ""));
 
-        printHeader("ADD PRODUCT TO CART");
+        List<Product> products = productService.getAllProducts();
+        if (products.isEmpty()) {
+            System.out.println("No products available in the store right now.");
+            return;
+        }
+
+        // 1. Display available categories
+        Set<String> categories = products.stream()
+                .map(Product::getCategory)
+                .filter(Objects::nonNull)
+                .collect(Collectors.toCollection(TreeSet::new));
+        System.out.println("CATEGORIES: " + String.join(" | ", categories));
+
+        // 2. Display the products list table
+        displayProductList(products);
+
+        // 3. Prompt user for product name or ID
         try {
-            System.out.print("Enter Product ID to add: ");
-            int productId = readIntChoice();
+            System.out.print("\nEnter Product Name (or ID) to add: ");
+            String input = scanner.nextLine().trim();
+            if (input.isEmpty()) return;
+
+            // If user entered a category name, filter down and ask again
+            for (String cat : categories) {
+                if (cat.equalsIgnoreCase(input)) {
+                    List<Product> catProducts = productService.filterByCategory(cat);
+                    System.out.println("\n--- Products in " + cat + " ---");
+                    displayProductList(catProducts);
+                    System.out.print("\nEnter Product Name (or ID) from " + cat + " to add: ");
+                    input = scanner.nextLine().trim();
+                    break;
+                }
+            }
+
+            Product product = resolveProduct(input);
+            System.out.println("Selected: " + product.getProductName() + " | Price: Rs. " + product.getPrice() + " | In Stock: " + product.getQuantity());
+
             System.out.print("Enter Quantity: ");
             int quantity = readIntChoice();
 
-            cartService.addToCart(currentCustomer.getCustomerId(), productId, quantity);
-            System.out.println("\n[SUCCESS] Item successfully added to your cart!");
+            cartService.addToCart(getActiveCustomerId(), product.getProductId(), quantity);
+            System.out.println("\n[SUCCESS] '" + product.getProductName() + "' (x" + quantity + ") added to your cart!");
+            if (currentCustomer == null) {
+                System.out.println("[NOTE] Added to guest cart. You can view your cart or log in whenever you want to place the order.");
+            }
         } catch (ProductNotFoundException | InsufficientStockException | InvalidQuantityException e) {
             System.out.println("\n[!] " + e.getMessage());
         }
     }
 
     private static void handleViewCart() {
-        if (!ensureLoggedIn()) return;
-
-        printHeader("YOUR SHOPPING CART");
-        List<CartItem> cartItems = cartService.getCartItems(currentCustomer.getCustomerId());
+        int customerId = getActiveCustomerId();
+        printHeader("YOUR SHOPPING CART" + (currentCustomer == null ? " [Guest Cart]" : ""));
+        List<CartItem> cartItems = cartService.getCartItems(customerId);
 
         if (cartItems.isEmpty()) {
             System.out.println("Your cart is currently empty.");
@@ -438,7 +556,7 @@ public class EcommerceApplication {
         }
 
         cartItems.forEach(System.out::println);
-        double total = cartService.calculateCartTotal(currentCustomer.getCustomerId());
+        double total = cartService.calculateCartTotal(customerId);
         System.out.println("-----------------------------------------------------------------");
         System.out.printf("Total Cart Value: Rs.%.2f\n", total);
         System.out.println("-----------------------------------------------------------------");
@@ -455,23 +573,25 @@ public class EcommerceApplication {
         try {
             switch (cartChoice) {
                 case 1 -> {
-                    System.out.print("Enter Product ID: ");
-                    int pId = readIntChoice();
+                    System.out.print("Enter Product Name (or ID): ");
+                    String input = scanner.nextLine().trim();
+                    Product p = resolveProduct(input);
                     System.out.print("Quantity to add: ");
                     int addQty = readIntChoice();
-                    cartService.increaseQuantity(currentCustomer.getCustomerId(), pId, addQty);
-                    System.out.println("[SUCCESS] Quantity increased.");
+                    cartService.increaseQuantity(customerId, p.getProductId(), addQty);
+                    System.out.println("[SUCCESS] Quantity increased for " + p.getProductName() + ".");
                 }
                 case 2 -> {
-                    System.out.print("Enter Product ID: ");
-                    int pId = readIntChoice();
+                    System.out.print("Enter Product Name (or ID): ");
+                    String input = scanner.nextLine().trim();
+                    Product p = resolveProduct(input);
                     System.out.print("Quantity to subtract: ");
                     int subQty = readIntChoice();
-                    cartService.decreaseQuantity(currentCustomer.getCustomerId(), pId, subQty);
-                    System.out.println("[SUCCESS] Quantity decreased.");
+                    cartService.decreaseQuantity(customerId, p.getProductId(), subQty);
+                    System.out.println("[SUCCESS] Quantity decreased for " + p.getProductName() + ".");
                 }
                 case 3 -> {
-                    cartService.clearCart(currentCustomer.getCustomerId());
+                    cartService.clearCart(customerId);
                     System.out.println("[SUCCESS] Cart cleared.");
                 }
                 case 4 -> {}
@@ -483,17 +603,53 @@ public class EcommerceApplication {
     }
 
     private static void handleRemoveFromCart() {
-        if (!ensureLoggedIn()) return;
+        int customerId = getActiveCustomerId();
+        printHeader("REMOVE ITEM FROM CART" + (currentCustomer == null ? " [Guest Cart]" : ""));
+        List<CartItem> cartItems = cartService.getCartItems(customerId);
+        if (cartItems.isEmpty()) {
+            System.out.println("Your cart is currently empty.");
+            return;
+        }
 
-        printHeader("REMOVE ITEM FROM CART");
-        System.out.print("Enter Product ID to remove: ");
-        int productId = readIntChoice();
-        cartService.removeFromCart(currentCustomer.getCustomerId(), productId);
-        System.out.println("\n[SUCCESS] Item removed from your cart.");
+        System.out.println("Items currently in your cart:");
+        cartItems.forEach(System.out::println);
+
+        try {
+            System.out.print("\nEnter Product Name (or ID) to remove: ");
+            String input = scanner.nextLine().trim();
+            Product product = resolveProduct(input);
+            cartService.removeFromCart(customerId, product.getProductId());
+            System.out.println("\n[SUCCESS] '" + product.getProductName() + "' removed from your cart.");
+        } catch (ProductNotFoundException e) {
+            System.out.println("\n[!] " + e.getMessage());
+        }
     }
 
     private static void handlePlaceOrder() {
-        if (!ensureLoggedIn()) return;
+        if (currentCustomer == null) {
+            List<CartItem> guestItems = cartService.getCartItems(GUEST_CUSTOMER_ID);
+            if (guestItems.isEmpty()) {
+                System.out.println("\n[!] Your cart is empty! Add products to cart first.");
+                return;
+            }
+            System.out.println("\n[!] You must be logged in to place an order and checkout.");
+            System.out.println("1. Login with existing Customer ID");
+            System.out.println("2. Register a new Customer Account");
+            System.out.println("3. Return to Menu");
+            System.out.print("Choose an option: ");
+            int option = readIntChoice();
+            if (option == 1) {
+                handleCustomerLogin();
+                if (currentCustomer == null) return;
+            } else if (option == 2) {
+                handleCustomerRegister();
+                System.out.println("\nPlease log in with your Customer ID to complete your order.");
+                handleCustomerLogin();
+                if (currentCustomer == null) return;
+            } else {
+                return;
+            }
+        }
 
         printHeader("CHECKOUT & PLACE ORDER");
         try {
@@ -553,6 +709,57 @@ public class EcommerceApplication {
     //                         HELPER METHODS
     // ========================================================================
 
+    /**
+     * Resolves a Product by either its Product Name or its numeric ID.
+     * Supports case-insensitive matching and partial search.
+     */
+    private static Product resolveProduct(String input) throws ProductNotFoundException {
+        if (input == null || input.trim().isEmpty()) {
+            throw new ProductNotFoundException("Product identifier cannot be empty.");
+        }
+        input = input.trim();
+
+        // 1. If user typed numeric ID, look up by ID first
+        try {
+            int id = Integer.parseInt(input);
+            try {
+                return productService.getProductById(id);
+            } catch (ProductNotFoundException ignored) {}
+        } catch (NumberFormatException ignored) {}
+
+        // 2. Search by Product Name (case-insensitive substring match)
+        List<Product> matches = productService.searchByName(input);
+        if (matches.isEmpty()) {
+            throw new ProductNotFoundException("No product found matching '" + input + "'.");
+        }
+
+        // Exact match priority (case-insensitive)
+        for (Product p : matches) {
+            if (p.getProductName().equalsIgnoreCase(input)) {
+                return p;
+            }
+        }
+
+        // Single partial match
+        if (matches.size() == 1) {
+            return matches.get(0);
+        }
+
+        // Multiple partial matches: display and prompt user to select
+        System.out.println("\nMultiple products matched '" + input + "':");
+        for (int i = 0; i < matches.size(); i++) {
+            Product p = matches.get(i);
+            System.out.printf("  %d. %s (Price: Rs.%.2f | Stock: %d | ID: %d)\n",
+                    i + 1, p.getProductName(), p.getPrice(), p.getQuantity(), p.getProductId());
+        }
+        System.out.print("Select product number (1-" + matches.size() + "): ");
+        int selection = readIntChoice();
+        if (selection >= 1 && selection <= matches.size()) {
+            return matches.get(selection - 1);
+        }
+        throw new ProductNotFoundException("Invalid product selection.");
+    }
+
     private static void printHeader(String title) {
         System.out.println("\n" + "=".repeat(65));
         System.out.println("  " + title);
@@ -561,11 +768,20 @@ public class EcommerceApplication {
 
     private static void displayProductList(List<Product> products) {
         if (products == null || products.isEmpty()) {
-            System.out.println("\nNo products matched your criteria.");
-        } else {
-            System.out.println("\nMatching Products (" + products.size() + "):");
-            products.forEach(System.out::println);
+            System.out.println("\n[!] No products matched your criteria.");
+            return;
         }
+
+        System.out.println("\n" + "-".repeat(88));
+        System.out.printf("| %-4s | %-20s | %-13s | %-10s | %-14s | %-8s |\n",
+                "ID", "Product Name", "Category", "Brand", "Price", "Stock");
+        System.out.println("-".repeat(88));
+        for (Product p : products) {
+            System.out.printf("| %-4d | %-20s | %-13s | %-10s | Rs.%-11.2f | %-8d |\n",
+                    p.getProductId(), p.getProductName(), p.getCategory(), p.getBrand(), p.getPrice(), p.getQuantity());
+        }
+        System.out.println("-".repeat(88));
+        System.out.println("Total products shown: " + products.size());
     }
 
     /**
